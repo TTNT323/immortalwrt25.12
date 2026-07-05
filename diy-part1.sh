@@ -15,6 +15,9 @@ sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' pack
 # 删除默认luci-app-ttyd
 sed -i 's/ +luci-app-ttyd//g' package/mtk/applications/luci-app-turboacc-mtk/Makefile
 
+# 添加猫咪
+svn co https://github.com/vernesong/OpenClash/trunk/luci-app-openclash package/luci-app-openclash
+
 # Uncomment a feed source
 #sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
 
