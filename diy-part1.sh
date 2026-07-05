@@ -16,7 +16,21 @@ sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' pack
 sed -i 's/ +luci-app-ttyd//g' package/mtk/applications/luci-app-turboacc-mtk/Makefile
 
 # 添加猫咪
-svn co https://github.com/vernesong/OpenClash/tree/master/luci-app-openclash package/luci-app-openclash
+# 创建插件目录
+mkdir -p package/luci-app-openclash
+cd package/luci-app-openclash
+
+# 初始化 Git 仓库并拉取 OpenClash 项目
+git init
+git remote add -f origin https://github.com/vernesong/OpenClash.git
+
+# 启用稀疏检出，只下载 luci-app-openclash 子目录
+git config core.sparsecheckout true
+echo "luci-app-openclash" >> .git/info/sparse-checkout
+
+# 拉取代码
+git pull --depth 1 origin master
+git branch --set-upstream-to=origin/master master
 
 # Uncomment a feed source
 #sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
