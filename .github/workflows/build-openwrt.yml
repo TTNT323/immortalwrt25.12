@@ -180,7 +180,7 @@ jobs:
         echo "后台：192.168.6.1" >> release.txt
         echo "账号：root" >> release.txt
         echo "密码：无" >> release.txt
-        echo "编译源码：https://github.com/padavanonly/immortalwrt-mt798x-6.6" >> release.txt
+        echo "编译源码：https://github.com/chasey-dev/immortalwrt-mt798x-rebase" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
         
     - name: Upload firmware to release
