@@ -20,10 +20,10 @@ sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generat
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
 
 # 修改无线日志级别为0
-sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' ./package/mtk/applications/mtwifi-cfg/files/netifd/mtwifi.sh
+sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' package/mtk/applications/mtwifi-cfg/files/netifd/mtwifi.sh
 
 # 删除默认luci-app-ttyd
-# sed -i 's/ +luci-app-ttyd//g' ./package/mtk/applications/luci-app-turboacc-mtk/Makefile
+# sed -i 's/ +luci-app-ttyd//g' package/mtk/applications/luci-app-turboacc-mtk/Makefile
 
 # 添加猫咪
 # git clone --depth 1 https://github.com/vernesong/OpenClash.git /tmp/openclash-temp
