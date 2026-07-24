@@ -8,7 +8,7 @@
 # Description: Build OpenWrt using GitHub Actions
 #
 
-name: Build OpenWrt1
+name: Build OpenWrt
 
 on:
   repository_dispatch:
@@ -65,17 +65,6 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
         
-        - name: SSH connection to Actions
-          uses: P3TERX/ssh2actions@v1.0.0
-         if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
-          timeout-minutes: 60
-          env:
-            TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-            TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          with:
-            # 如果 Action 支持，可以添加等待提示
-            debug: true
-            
     - name: Clone source code
       working-directory: /workdir
       run: |
@@ -104,6 +93,17 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
+    - name: SSH connection to Actions
+      uses: P3TERX/ssh2actions@v1.0.0
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      timeout-minutes: 60
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      with:
+        # 如果 Action 支持，可以添加等待提示
+        debug: true
+
     - name: Download package
       id: package
       run: |
