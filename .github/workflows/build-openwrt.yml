@@ -79,15 +79,6 @@ jobs:
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
-    - name: Modify mtwifi.sh
-      run: |
-        cd openwrt
-        if [ -f "package/mtk/applications/mtwifi-cfg/files/netifd/mtwifi.sh" ]; then
-          sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' \
-              package/mtk/applications/mtwifi-cfg/files/netifd/mtwifi.sh
-        else
-          echo "⚠️ Warning: mtwifi.sh not found, skipping"
-        fi
         
     - name: Load custom configuration
       run: |
