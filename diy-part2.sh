@@ -21,6 +21,20 @@ sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generat
 
 # 修改无线日志级别为0
 # sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' package/mtk/applications/mtwifi-cfg/files/netifd/mtwifi.sh
+echo "=== 当前目录 ==="
+pwd
+echo "=== 安装所有 feeds 包 ==="
+./scripts/feeds install -a
+
+echo "=== 专门安装 mtwifi-cfg ==="
+./scripts/feeds install mtwifi-cfg
+
+echo "=== 检查文件是否存在 ==="
+ls -la package/mtk/applications/mtwifi-cfg/files/netifd/ 2>/dev/null || echo "目录不存在"
+
+echo "=== 搜索 mtwifi.sh ==="
+find . -name "mtwifi.sh" 2>/dev/null
+
 
 # 删除默认luci-app-ttyd
 # sed -i 's/ +luci-app-ttyd//g' package/mtk/applications/luci-app-turboacc-mtk/Makefile
