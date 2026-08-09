@@ -8,143 +8,176 @@
 # Description: Build OpenWrt using GitHub Actions
 #
 
+# 工作流名称
 name: Build OpenWrt
 
+# 触发方式：支持仓库调度（repository_dispatch）和手动触发（workflow_dispatch）
+# 手动触发时可选择是否开启 SSH 调试
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'SSH connection to Actions'
+        description: 'SSH connection to Actions'   # 是否开启 SSH 调试
         required: false
         default: 'false'
 
+# 全局环境变量，所有步骤均可使用
 env:
-  REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase
-  REPO_BRANCH: 25.12
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: false
-  UPLOAD_RELEASE: true
-  TZ: Asia/Shanghai
-  # 强制使用 Node.js 24 运行 JavaScript Actions
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase   # 源码仓库地址
+  REPO_BRANCH: 25.12                               # 目标分支
+  FEEDS_CONF: feeds.conf.default                   # feeds 配置文件
+  CONFIG_FILE: .config                             # OpenWrt 配置文件
+  DIY_P1_SH: diy-part1.sh                          # 预处理脚本1（更新feeds前）
+  DIY_P2_SH: diy-part2.sh                          # 预处理脚本2（加载配置后）
+  UPLOAD_FIRMWARE: true                            # 是否上传整理后的固件
+  UPLOAD_RELEASE: true                             # 是否发布到 GitHub Release
+  TZ: Asia/Shanghai                                # 时区
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true         # 强制使用 Node.js 24（兼容老旧 Action）
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04                          # 运行环境
     permissions:
-      contents: write
-      
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      contents: write                              # 允许写入仓库内容（Release 上传）
 
+    steps:
+    # ========== 步骤 1：检出仓库代码 ==========
+    - name: Checkout
+      uses: actions/checkout@v6                    # 升级到 v6，原生支持 Node.js 24
+
+    # ========== 步骤 2：初始化编译环境 ==========
     - name: Initialization environment
       env:
-        DEBIAN_FRONTEND: noninteractive
+        DEBIAN_FRONTEND: noninteractive            # 避免 apt 交互提示
       run: |
-        # 清理系统冗余文件（释放磁盘空间，避免编译时空间不足）
+        # 清理系统冗余文件，释放磁盘空间
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
-        # 更新apt软件源
+        # 更新软件源并安装编译依赖（MT798x/6.6 内核专用）
         sudo apt update
-        # 安装编译ImmortalWrt（MT798x/6.6内核）所需的所有依赖包（比普通OpenWrt多clang/llvm等编译工具）
         sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
-        # 清理apt缓存，释放更多空间
+        # 清理 apt 缓存
         sudo apt autoremove --purge
         sudo apt clean
-        # 设置系统时区（和env里的TZ保持一致）
+        # 设置时区
         sudo timedatectl set-timezone "$TZ"
-        # 创建编译目录并授权（避免权限不足导致编译失败）
+        # 创建工作目录并授权
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-        
+
+    # ========== 步骤 3：克隆源码（支持分支自动回退） ==========
     - name: Clone source code
       working-directory: /workdir
       run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        
+        df -hT $PWD                                  # 查看磁盘空间
+        rm -rf openwrt                               # 清理可能存在的旧目录
+        echo "尝试克隆分支: $REPO_BRANCH"
+        # 尝试克隆指定分支，失败则获取默认分支
+        if git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" openwrt 2>/dev/null; then
+          echo "成功克隆分支 $REPO_BRANCH"
+        else
+          echo "分支 $REPO_BRANCH 不存在，获取默认分支..."
+          DEFAULT_BRANCH=$(git ls-remote --symref "$REPO_URL" HEAD | \
+                            awk '/^ref:/ {split($2, a, "/"); print a[3]}')
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            echo "无法获取默认分支，使用远程 HEAD"
+            git clone --depth 1 "$REPO_URL" openwrt
+          else
+            echo "默认分支: $DEFAULT_BRANCH"
+            git clone --depth 1 --branch "$DEFAULT_BRANCH" "$REPO_URL" openwrt
+          fi
+        fi
+        # 检查克隆是否成功
+        if [ ! -d openwrt ]; then
+          echo "错误：克隆失败，请检查仓库地址或网络。"
+          exit 1
+        fi
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+    # ========== 步骤 4：加载自定义 feeds ==========
     - name: Load custom feeds
       run: |
+        # 如果存在自定义 feeds 文件，则替换默认配置
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-        
+        $GITHUB_WORKSPACE/$DIY_P1_SH               # 执行自定义脚本（例如添加第三方源）
+
+    # ========== 步骤 5：更新 feeds ==========
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
+    # ========== 步骤 6：安装 feeds ==========
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    # ========== 步骤 7：加载自定义配置 ==========
     - name: Load custom configuration
       run: |
+        # 如果存在 files 目录（自定义文件覆盖），则移动到 openwrt
         [ -e files ] && mv files openwrt/files
+        # 如果存在 .config 文件，则覆盖到 openwrt/.config
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-        
+        $GITHUB_WORKSPACE/$DIY_P2_SH               # 执行自定义脚本（如修改配置）
+
+    # ========== 步骤 8：SSH 调试（可选） ==========
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      if: github.event.inputs.ssh == 'true' || contains(github.event.action, 'ssh')   # 简化条件
+      timeout-minutes: 60                           # 60 分钟后自动超时，避免无限等待
       env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}    # 可选通知
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
+    # ========== 步骤 9：预配置并下载软件包 ==========
     - name: Download package
       id: package
       run: |
         cd openwrt
-        make defconfig
-        make download -j8
+        make defconfig                             # 生成完整配置（确保 feeds 路径正确）
+        make download -j8                          # 并行下载所有依赖源码
+        # 查找并删除下载失败的小文件（小于 1KB），以便重试
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
-        
+
+    # ========== 步骤 10：编译固件 ==========
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
+        # 先尝试全核编译，失败则降级为单核，再失败则带详细日志
         make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT   # 标记编译成功
+        # 提取设备名称（用于文件命名）
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-        
+
+    # ========== 步骤 11：检查磁盘空间（调试用） ==========
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
 
-    - name: Upload bin directory
-      uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    # 整理编译好的固件
+    # ========== 步骤 12：整理固件文件（只保留刷机文件） ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
+        # 删除无关文件和文件夹
         rm -rf packages
         rm -rf *.buildinfo
         rm -rf *.manifest
         rm -rf *.json
         rm -rf *bl2.bin
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV        # 将固件目录路径存入环境变量
         echo "status=success" >> $GITHUB_OUTPUT
-        
+
+    # ========== 步骤 13：上传固件目录（作为 Artifact） ==========
     - name: Upload firmware directory
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -152,24 +185,7 @@ jobs:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: Upload firmware to cowtransfer
-      id: cowtransfer
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
-      run: |
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
-        echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
-        echo "url=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        
-    - name: Upload firmware to WeTransfer
-      id: wetransfer
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
-      run: |
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
-        echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
-        echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        
+    # ========== 步骤 14：生成 Release 标签和发布说明 ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -182,9 +198,10 @@ jobs:
         echo "密码：无" >> release.txt
         echo "编译源码：https://github.com/chasey-dev/immortalwrt-mt798x-rebase" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
-        
+
+    # ========== 步骤 15：上传固件到 GitHub Release ==========
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3          # 升级到 v3，支持 Node.js 24
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -193,39 +210,33 @@ jobs:
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
-    # 清理旧的 releases 和 tags，只保留最近3个
+    # ========== 步骤 16：清理旧的 Release 和 Tag（仅保留最近 3 个） ==========
     - name: Clean up old releases and tags
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         echo "开始清理旧的 releases 和 tags，保留最近3个..."
-        
-        # 获取所有 releases（按创建时间倒序）
+        # 获取所有 releases 按创建时间倒序排列
         releases=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           "https://api.github.com/repos/${{ github.repository }}/releases" | \
           jq -r '.[] | "\(.created_at) \(.tag_name)"' | sort -r | tail -n +4)
-        
-        # 删除旧的 releases 和 tags
+        # 删除超出数量的 release 和对应的 tag
         echo "$releases" | while read -r line; do
           tag=$(echo "$line" | cut -d' ' -f2)
           if [ -n "$tag" ]; then
             echo "删除旧的 release 和 tag: $tag"
-            
-            # 获取该 release 的 ID 并删除
+            # 获取 release ID 并删除
             release_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" | \
               jq -r '.id')
-            
             if [ "$release_id" != "null" ] && [ -n "$release_id" ]; then
               curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                 "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
               echo "已删除 release: $tag"
             fi
-            
-            # 删除对应的 tag
+            # 删除远程 tag（忽略错误）
             git push origin --delete "$tag" || echo "删除 tag 失败（可能已被删除）"
           fi
         done
-        
         echo "清理完成，已保留最近3个 releases 和 tags"
