@@ -192,7 +192,7 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "immortalwrt24.10-6.6_nokia_ea0326gmp" >> release.txt
+        echo "immortalwrt25.12_nokia_ea0326gmp" >> release.txt
         echo "后台：192.168.6.1" >> release.txt
         echo "账号：root" >> release.txt
         echo "密码：无" >> release.txt
