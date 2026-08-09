@@ -185,7 +185,7 @@ jobs:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    # ========== 步骤 14：生成 Release 标签和发布说明 ==========
+    # ========== 步骤 14：生成 Release 标签和发布说明（源码地址自动读取 REPO_URL） ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -196,7 +196,7 @@ jobs:
         echo "后台：192.168.6.1" >> release.txt
         echo "账号：root" >> release.txt
         echo "密码：无" >> release.txt
-        echo "编译源码：https://github.com/chasey-dev/immortalwrt-mt798x-rebase" >> release.txt
+        echo "编译源码：$REPO_URL" >> release.txt   # 直接使用环境变量
         echo "status=success" >> $GITHUB_OUTPUT
 
     # ========== 步骤 15：上传固件到 GitHub Release ==========
