@@ -31,3 +31,17 @@ sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' pack
 # find /tmp/openclash-temp -type d -name "luci-app-openclash" -exec cp -r {} package/ \;
 # 清理临时文件
 # rm -rf /tmp/openclash-temp
+# ====== Slim down: ea0326gmp skip bl31-uboot.fip / preloader.bin ======
+# .config already disables u-boot and trusted-firmware-a packages.
+# Remove the image-stage ARTIFACTS lines too, so `cat` of the missing
+# fip/bl2 files in staging does not break the build.
+MK="target/linux/mediatek/image/filogic.mk"
+if [ -f "$MK" ]; then
+  sed -i '/define Device\/nokia_ea0326gmp/,/^endef/ {
+    /ARTIFACTS := preloader.bin bl31-uboot.fip/d
+    /ARTIFACT\/preloader.bin/d
+    /ARTIFACT\/bl31-uboot.fip/d
+  }' "$MK"
+  echo "---- ea0326gmp device (artifacts removed) ----"
+  sed -n '/define Device\/nokia_ea0326gmp/,/^endef/p' "$MK"
+fi
