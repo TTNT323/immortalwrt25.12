@@ -25,7 +25,7 @@ on:
 # 全局环境变量，所有步骤均可使用
 env:
   REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase   # 源码仓库地址
-  REPO_BRANCH: 25.12                               # 目标分支
+  REPO_BRANCH: "25.12"                               # 目标分支
   FEEDS_CONF: feeds.conf.default                   # feeds 配置文件
   CONFIG_FILE: .config                             # OpenWrt 配置文件
   DIY_P1_SH: diy-part1.sh                          # 预处理脚本1（更新feeds前）
@@ -160,6 +160,22 @@ jobs:
           cp -rf "$GITHUB_WORKSPACE/patch/"* ./
         else
           echo '!!! 警告: 未找到 upload-package.zip 或 patch/ 目录'
+        fi
+
+        if [ -f package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency ]; then
+          echo '--- 应用优化文件覆盖 OK ---'
+          chmod +x package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency 2>/dev/null || true
+          chmod +x package/base-files/files/etc/init.d/ea0326-latency 2>/dev/null || true
+          chmod +x package/base-files/files/sbin/ea0326-latency.sh 2>/dev/null || true
+          echo '--- 已覆盖文件校验 ---'
+          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
+          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b1.dat
+          ls -l package/base-files/files/etc/sysctl.d/99-gaming-latency.conf
+          ls -l package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency
+          ls -l package/base-files/files/etc/init.d/ea0326-latency
+          ls -l package/base-files/files/sbin/ea0326-latency.sh
+          echo '--- 2.4G dat 关键项 ---'
+          grep -E '^(Channel|HT_BW|RTSThreshold|HT_PROTECT|AMSDU_NUM|APSDCapable|MboSupport)=' package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
         fi
         # ===== EA0326GMP: 不生成 preloader.bin 与 bl31-uboot.fip =====
         # 说明: 该机型使用原厂 U-Boot (stock layout, sysupgrade.itb 不含 bootloader),
