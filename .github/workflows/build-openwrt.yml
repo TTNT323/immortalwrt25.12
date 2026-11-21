@@ -139,11 +139,15 @@ jobs:
         if [ -f package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency ]; then
           echo '--- 应用优化文件覆盖 OK ---'
           chmod +x package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency 2>/dev/null || true
+          chmod +x package/base-files/files/etc/init.d/ea0326-latency 2>/dev/null || true
+          chmod +x package/base-files/files/sbin/ea0326-latency.sh 2>/dev/null || true
           echo '--- 已覆盖文件校验 ---'
           ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
           ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b1.dat
           ls -l package/base-files/files/etc/sysctl.d/99-gaming-latency.conf
           ls -l package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency
+          ls -l package/base-files/files/etc/init.d/ea0326-latency
+          ls -l package/base-files/files/sbin/ea0326-latency.sh
           echo '--- 2.4G dat 关键项 ---'
           grep -E '^(Channel|HT_BW|AMSDU_NUM|HT_AMSDU|APSDCapable|MboSupport)=' package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
         fi
