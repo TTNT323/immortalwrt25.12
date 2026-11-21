@@ -99,7 +99,7 @@ jobs:
     - name: Load custom feeds
       run: |
         # 如果存在自定义 feeds 文件，则替换默认配置
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        if [ -e "$FEEDS_CONF" ]; then mv "$FEEDS_CONF" openwrt/feeds.conf.default; fi
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH               # 执行自定义脚本（例如添加第三方源）
@@ -115,10 +115,10 @@ jobs:
     # ========== 步骤 7：加载自定义配置 ==========
     - name: Load custom configuration
       run: |
-        # 如果存在 files 目录（自定义文件覆盖），则移动到 openwrt
-        [ -e files ] && mv files openwrt/files
-        # 如果存在 .config 文件，则覆盖到 openwrt/.config
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        # 注意: GitHub Actions 用 bash -e, 单独的 [ -e x ] && cmd 在条件为假时
+        # 返回非0 会让整个 step 直接失败。必须用 if 包裹或加 || true
+        if [ -e files ]; then mv files openwrt/files; fi
+        if [ -e "$CONFIG_FILE" ]; then mv "$CONFIG_FILE" openwrt/.config; fi
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH               # 执行自定义脚本（如修改配置）
@@ -131,7 +131,7 @@ jobs:
           unzip -q -o "$GITHUB_WORKSPACE/upload-package.zip" -d /tmp/ea0326-pkg
           cp -rf /tmp/ea0326-pkg/patch/* ./
           # zip 内也带精简 .config，一并覆盖（步骤9 make defconfig 会据此生成）
-          [ -f /tmp/ea0326-pkg/.config ] && cp -f /tmp/ea0326-pkg/.config ./.config
+          if [ -f /tmp/ea0326-pkg/.config ]; then cp -f /tmp/ea0326-pkg/.config ./.config; fi
         elif [ -d "$GITHUB_WORKSPACE/patch" ]; then
           echo '--- 应用 patch/ 目录覆盖 ---'
           cp -rf "$GITHUB_WORKSPACE/patch/"* ./
@@ -175,6 +175,20 @@ jobs:
       run: |
         cd openwrt
         make defconfig                             # 生成完整配置（确保 feeds 路径正确）
+
+        # 校验精简项未被 defconfig 重新打开(依赖链可能强制 select)
+        echo '--- 校验精简项是否保持关闭 ---'
+        for k in kmod-ppp ppp ppp-mod-pppoe kmod-zram zram-swap odhcp6c luci-app-upnp; do
+          if grep -q "^CONFIG_PACKAGE_${k}=y" .config; then
+            echo "WARNING: CONFIG_PACKAGE_${k} 被重新启用(依赖强制), 已再次关闭"
+            sed -i "s/^CONFIG_PACKAGE_${k}=y/# CONFIG_PACKAGE_${k} is not set/" .config
+          fi
+        done
+        echo '--- 关键保留项确认 ---'
+        for k in kmod-mt_wifi kmod-mediatek_hnat kmod-tcp-bbr dnsmasq-full firewall4 netifd; do
+          grep -q "^CONFIG_PACKAGE_${k}=y" .config && echo "  OK $k" || echo "  WARNING: $k 未启用"
+        done
+
         make download -j8                          # 并行下载所有依赖源码
         # 查找并删除下载失败的小文件（小于 1KB），以便重试
         find dl -size -1024c -exec ls -l {} \;
@@ -186,8 +200,15 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 先尝试全核编译，失败则降级为单核，再失败则带详细日志
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        # 先尝试全核编译；失败则重试单核（复用已编译对象，不清理，避免浪费时间）
+        # 第三次带 V=s 输出详细日志便于排错
+        if ! make -j$(nproc); then
+          echo '=== 全核编译失败，降级单核重试 ==='
+          if ! make -j1; then
+            echo '=== 单核仍失败，带详细日志重试 ==='
+            make -j1 V=s
+          fi
+        fi
         echo "status=success" >> $GITHUB_OUTPUT   # 标记编译成功
         # 提取设备名称（用于文件命名）
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -204,7 +225,14 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        # 用 find 定位唯一固件目录, 避免多目录时 cd 报 too many arguments
+        FW_DIR=$(find openwrt/bin/targets -mindepth 2 -maxdepth 2 -type d | head -n1)
+        if [ -z "$FW_DIR" ]; then
+          echo '错误: 未找到固件输出目录'
+          exit 1
+        fi
+        echo "固件目录: $FW_DIR"
+        cd "$FW_DIR"
         # 删除无关文件和文件夹
         rm -rf packages
         rm -rf *.buildinfo
@@ -223,6 +251,7 @@ jobs:
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+        retention-days: 7                        # 限制保留期, 避免占满存储配额
 
     # ========== 步骤 14：生成 Release 标签和发布说明（源码地址自动读取 REPO_URL） ==========
     - name: Generate release tag
@@ -257,8 +286,9 @@ jobs:
       run: |
         echo "开始清理旧的 releases 和 tags，保留最近3个..."
         # 获取所有 releases 按创建时间倒序排列
+        # per_page=100 避免默认 30 条分页导致清理不全
         releases=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          "https://api.github.com/repos/${{ github.repository }}/releases" | \
+          "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" | \
           jq -r '.[] | "\(.created_at) \(.tag_name)"' | sort -r | tail -n +4)
         # 删除超出数量的 release 和对应的 tag
         echo "$releases" | while read -r line; do
@@ -274,8 +304,10 @@ jobs:
                 "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
               echo "已删除 release: $tag"
             fi
-            # 删除远程 tag（忽略错误）
-            git push origin --delete "$tag" || echo "删除 tag 失败（可能已被删除）"
+            # 删除远程 tag: 用 API 而非 git push(checkout 是 detached HEAD 且无推送凭证)
+            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$tag" \
+              && echo "已删除 tag: $tag" || echo "删除 tag 失败（可能已被删除）"
           fi
         done
         echo "清理完成，已保留最近3个 releases 和 tags"
