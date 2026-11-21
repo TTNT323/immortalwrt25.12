@@ -127,31 +127,40 @@ jobs:
         # 支持两种方式: (1) 仓库内 patch/ 目录  (2) 仓库根目录 upload-package.zip 自动解压
         if [ -f "$GITHUB_WORKSPACE/upload-package.zip" ]; then
           echo '--- 检测到 upload-package.zip，自动解压 ---'
-          rm -rf /tmp/ea0326-pkg && mkdir -p /tmp/ea0326-pkg
-          unzip -q -o "$GITHUB_WORKSPACE/upload-package.zip" -d /tmp/ea0326-pkg
+          rm -rf /tmp/ea0326-pkg /tmp/ea0326-fixed.zip && mkdir -p /tmp/ea0326-pkg
+          SRC_ZIP="$GITHUB_WORKSPACE/upload-package.zip"
+
+          # python 读 zip 会自动把反斜杠转正斜杠, 必须查原始字节判断
+          # 用 -c 单行避免 heredoc 在 YAML 块标量里的缩进问题
+          if python3 -c "import sys,zipfile; sys.exit(0 if any(chr(92) in i.orig_filename for i in zipfile.ZipFile(sys.argv[1]).infolist()) else 1)" "$SRC_ZIP" 2>/dev/null; then
+            echo '!!! 检测到反斜杠路径(Windows 打包), 正在规范化'
+            python3 -c "import sys,zipfile; s,d=sys.argv[1],sys.argv[2]; zi=zipfile.ZipFile(s); zo=zipfile.ZipFile(d,'w',zipfile.ZIP_DEFLATED); [zo.writestr(i.orig_filename.replace(chr(92),chr(47)), zi.read(i.filename)) for i in zi.infolist()]; zo.close(); zi.close()" "$SRC_ZIP" /tmp/ea0326-fixed.zip
+            if [ -f /tmp/ea0326-fixed.zip ]; then SRC_ZIP=/tmp/ea0326-fixed.zip; echo '规范化完成'; fi
+          else
+            echo '路径格式正常'
+          fi
+
+          if ! unzip -q -o "$SRC_ZIP" -d /tmp/ea0326-pkg; then
+            echo '!!! 错误: 解压失败, zip 可能损坏'
+            exit 1
+          fi
+
+          # 校验 patch 目录, 缺失时打印结构再退出(避免 cp 硬失败看不出原因)
+          if [ ! -d /tmp/ea0326-pkg/patch ]; then
+            echo '!!! 错误: zip 内缺少 patch/ 目录'
+            echo '--- zip 实际结构 ---'
+            find /tmp/ea0326-pkg -maxdepth 4 | head -40
+            exit 1
+          fi
+
           cp -rf /tmp/ea0326-pkg/patch/* ./
-          # zip 内也带精简 .config，一并覆盖（步骤9 make defconfig 会据此生成）
           if [ -f /tmp/ea0326-pkg/.config ]; then cp -f /tmp/ea0326-pkg/.config ./.config; fi
         elif [ -d "$GITHUB_WORKSPACE/patch" ]; then
           echo '--- 应用 patch/ 目录覆盖 ---'
           cp -rf "$GITHUB_WORKSPACE/patch/"* ./
+        else
+          echo '!!! 警告: 未找到 upload-package.zip 或 patch/ 目录'
         fi
-        if [ -f package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency ]; then
-          echo '--- 应用优化文件覆盖 OK ---'
-          chmod +x package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency 2>/dev/null || true
-          chmod +x package/base-files/files/etc/init.d/ea0326-latency 2>/dev/null || true
-          chmod +x package/base-files/files/sbin/ea0326-latency.sh 2>/dev/null || true
-          echo '--- 已覆盖文件校验 ---'
-          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
-          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b1.dat
-          ls -l package/base-files/files/etc/sysctl.d/99-gaming-latency.conf
-          ls -l package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency
-          ls -l package/base-files/files/etc/init.d/ea0326-latency
-          ls -l package/base-files/files/sbin/ea0326-latency.sh
-          echo '--- 2.4G dat 关键项 ---'
-          grep -E '^(Channel|HT_BW|AMSDU_NUM|HT_AMSDU|APSDCapable|MboSupport)=' package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
-        fi
-
         # ===== EA0326GMP: 不生成 preloader.bin 与 bl31-uboot.fip =====
         # 说明: 该机型使用原厂 U-Boot (stock layout, sysupgrade.itb 不含 bootloader),
         # 这两个 artifact 仅供刷 OpenWrt U-Boot 使用, 常规 sysupgrade 升级不需要。
