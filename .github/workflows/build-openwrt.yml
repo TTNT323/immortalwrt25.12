@@ -25,7 +25,7 @@ on:
 # 全局环境变量，所有步骤均可使用
 env:
   REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase   # 源码仓库地址
-  REPO_BRANCH: "25.12"                               # 目标分支
+  REPO_BRANCH: 25.12                               # 目标分支
   FEEDS_CONF: feeds.conf.default                   # feeds 配置文件
   CONFIG_FILE: .config                             # OpenWrt 配置文件
   DIY_P1_SH: diy-part1.sh                          # 预处理脚本1（更新feeds前）
@@ -99,7 +99,7 @@ jobs:
     - name: Load custom feeds
       run: |
         # 如果存在自定义 feeds 文件，则替换默认配置
-        if [ -e "$FEEDS_CONF" ]; then mv "$FEEDS_CONF" openwrt/feeds.conf.default; fi
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH               # 执行自定义脚本（例如添加第三方源）
@@ -115,75 +115,13 @@ jobs:
     # ========== 步骤 7：加载自定义配置 ==========
     - name: Load custom configuration
       run: |
-        # 注意: GitHub Actions 用 bash -e, 单独的 [ -e x ] && cmd 在条件为假时
-        # 返回非0 会让整个 step 直接失败。必须用 if 包裹或加 || true
-        if [ -e files ]; then mv files openwrt/files; fi
-        if [ -e "$CONFIG_FILE" ]; then mv "$CONFIG_FILE" openwrt/.config; fi
+        # 如果存在 files 目录（自定义文件覆盖），则移动到 openwrt
+        [ -e files ] && mv files openwrt/files
+        # 如果存在 .config 文件，则覆盖到 openwrt/.config
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH               # 执行自定义脚本（如修改配置）
-
-        # ===== 自动覆盖优化文件到源码对应路径 =====
-        # 支持两种方式: (1) 仓库内 patch/ 目录  (2) 仓库根目录 upload-package.zip 自动解压
-        if [ -f "$GITHUB_WORKSPACE/upload-package.zip" ]; then
-          echo '--- 检测到 upload-package.zip，自动解压 ---'
-          rm -rf /tmp/ea0326-pkg /tmp/ea0326-fixed.zip && mkdir -p /tmp/ea0326-pkg
-          SRC_ZIP="$GITHUB_WORKSPACE/upload-package.zip"
-
-          # python 读 zip 会自动把反斜杠转正斜杠, 必须查原始字节判断
-          # 用 -c 单行避免 heredoc 在 YAML 块标量里的缩进问题
-          if python3 -c "import sys,zipfile; sys.exit(0 if any(chr(92) in i.orig_filename for i in zipfile.ZipFile(sys.argv[1]).infolist()) else 1)" "$SRC_ZIP" 2>/dev/null; then
-            echo '!!! 检测到反斜杠路径(Windows 打包), 正在规范化'
-            python3 -c "import sys,zipfile; s,d=sys.argv[1],sys.argv[2]; zi=zipfile.ZipFile(s); zo=zipfile.ZipFile(d,'w',zipfile.ZIP_DEFLATED); [zo.writestr(i.orig_filename.replace(chr(92),chr(47)), zi.read(i.filename)) for i in zi.infolist()]; zo.close(); zi.close()" "$SRC_ZIP" /tmp/ea0326-fixed.zip
-            if [ -f /tmp/ea0326-fixed.zip ]; then SRC_ZIP=/tmp/ea0326-fixed.zip; echo '规范化完成'; fi
-          else
-            echo '路径格式正常'
-          fi
-
-          if ! unzip -q -o "$SRC_ZIP" -d /tmp/ea0326-pkg; then
-            echo '!!! 错误: 解压失败, zip 可能损坏'
-            exit 1
-          fi
-
-          # 校验 patch 目录, 缺失时打印结构再退出(避免 cp 硬失败看不出原因)
-          if [ ! -d /tmp/ea0326-pkg/patch ]; then
-            echo '!!! 错误: zip 内缺少 patch/ 目录'
-            echo '--- zip 实际结构 ---'
-            find /tmp/ea0326-pkg -maxdepth 4 | head -40
-            exit 1
-          fi
-
-          cp -rf /tmp/ea0326-pkg/patch/* ./
-          if [ -f /tmp/ea0326-pkg/.config ]; then cp -f /tmp/ea0326-pkg/.config ./.config; fi
-        elif [ -d "$GITHUB_WORKSPACE/patch" ]; then
-          echo '--- 应用 patch/ 目录覆盖 ---'
-          cp -rf "$GITHUB_WORKSPACE/patch/"* ./
-        else
-          echo '!!! 警告: 未找到 upload-package.zip 或 patch/ 目录'
-        fi
-
-        if [ -f package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency ]; then
-          echo '--- 应用优化文件覆盖 OK ---'
-          chmod +x package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency 2>/dev/null || true
-          chmod +x package/base-files/files/etc/init.d/ea0326-latency 2>/dev/null || true
-          chmod +x package/base-files/files/sbin/ea0326-latency.sh 2>/dev/null || true
-          echo '--- 已覆盖文件校验 ---'
-          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
-          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b1.dat
-          ls -l package/base-files/files/etc/sysctl.d/99-gaming-latency.conf
-          ls -l package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency
-          ls -l package/base-files/files/etc/init.d/ea0326-latency
-          ls -l package/base-files/files/sbin/ea0326-latency.sh
-          echo '--- 2.4G dat 关键项 ---'
-          grep -E '^(Channel|HT_BW|RTSThreshold|HT_PROTECT|AMSDU_NUM|APSDCapable|MboSupport)=' package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
-        fi
-        # ===== EA0326GMP: 不生成 preloader.bin 与 bl31-uboot.fip =====
-        # 说明: 该机型使用原厂 U-Boot (stock layout, sysupgrade.itb 不含 bootloader),
-        # 这两个 artifact 仅供刷 OpenWrt U-Boot 使用, 常规 sysupgrade 升级不需要。
-        MK=target/linux/mediatek/image/filogic.mk
-        sed -i '/define Device\/nokia_ea0326gmp/,/^endef/{ /ARTIFACTS := preloader.bin bl31-uboot.fip/d; /ARTIFACT\/preloader.bin :=/d; /ARTIFACT\/bl31-uboot.fip :=/d; }' "$MK"
-        echo '--- EA0326GMP ARTIFACT lines after strip ---'
-        sed -n '/define Device\/nokia_ea0326gmp/,/^endef/p' "$MK" | grep ARTIFACT || echo '(none - OK)'
 
     # ========== 步骤 8：SSH 调试（可选） ==========
     - name: SSH connection to Actions
@@ -200,20 +138,6 @@ jobs:
       run: |
         cd openwrt
         make defconfig                             # 生成完整配置（确保 feeds 路径正确）
-
-        # 校验精简项未被 defconfig 重新打开(依赖链可能强制 select)
-        echo '--- 校验精简项是否保持关闭 ---'
-        for k in kmod-ppp ppp ppp-mod-pppoe kmod-zram zram-swap odhcp6c luci-app-upnp; do
-          if grep -q "^CONFIG_PACKAGE_${k}=y" .config; then
-            echo "WARNING: CONFIG_PACKAGE_${k} 被重新启用(依赖强制), 已再次关闭"
-            sed -i "s/^CONFIG_PACKAGE_${k}=y/# CONFIG_PACKAGE_${k} is not set/" .config
-          fi
-        done
-        echo '--- 关键保留项确认 ---'
-        for k in kmod-mt_wifi kmod-mediatek_hnat kmod-tcp-bbr dnsmasq-full firewall4 netifd; do
-          grep -q "^CONFIG_PACKAGE_${k}=y" .config && echo "  OK $k" || echo "  WARNING: $k 未启用"
-        done
-
         make download -j8                          # 并行下载所有依赖源码
         # 查找并删除下载失败的小文件（小于 1KB），以便重试
         find dl -size -1024c -exec ls -l {} \;
@@ -225,15 +149,8 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 先尝试全核编译；失败则重试单核（复用已编译对象，不清理，避免浪费时间）
-        # 第三次带 V=s 输出详细日志便于排错
-        if ! make -j$(nproc); then
-          echo '=== 全核编译失败，降级单核重试 ==='
-          if ! make -j1; then
-            echo '=== 单核仍失败，带详细日志重试 ==='
-            make -j1 V=s
-          fi
-        fi
+        # 先尝试全核编译，失败则降级为单核，再失败则带详细日志
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT   # 标记编译成功
         # 提取设备名称（用于文件命名）
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -250,22 +167,13 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 用 find 定位唯一固件目录, 避免多目录时 cd 报 too many arguments
-        FW_DIR=$(find openwrt/bin/targets -mindepth 2 -maxdepth 2 -type d | head -n1)
-        if [ -z "$FW_DIR" ]; then
-          echo '错误: 未找到固件输出目录'
-          exit 1
-        fi
-        echo "固件目录: $FW_DIR"
-        cd "$FW_DIR"
+        cd openwrt/bin/targets/*/*
         # 删除无关文件和文件夹
         rm -rf packages
         rm -rf *.buildinfo
         rm -rf *.manifest
         rm -rf *.json
         rm -rf *bl2.bin
-        # 双保险: 即使源码侧 sed 未生效, 也不上传 bootloader 文件
-        rm -f *preloader*.bin *bl31-uboot*.fip *uboot.fip
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV        # 将固件目录路径存入环境变量
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -276,7 +184,6 @@ jobs:
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
-        retention-days: 7                        # 限制保留期, 避免占满存储配额
 
     # ========== 步骤 14：生成 Release 标签和发布说明（源码地址自动读取 REPO_URL） ==========
     - name: Generate release tag
@@ -311,9 +218,8 @@ jobs:
       run: |
         echo "开始清理旧的 releases 和 tags，保留最近3个..."
         # 获取所有 releases 按创建时间倒序排列
-        # per_page=100 避免默认 30 条分页导致清理不全
         releases=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" | \
+          "https://api.github.com/repos/${{ github.repository }}/releases" | \
           jq -r '.[] | "\(.created_at) \(.tag_name)"' | sort -r | tail -n +4)
         # 删除超出数量的 release 和对应的 tag
         echo "$releases" | while read -r line; do
@@ -329,11 +235,8 @@ jobs:
                 "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
               echo "已删除 release: $tag"
             fi
-            # 删除远程 tag: 用 API 而非 git push(checkout 是 detached HEAD 且无推送凭证)
-            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$tag" \
-              && echo "已删除 tag: $tag" || echo "删除 tag 失败（可能已被删除）"
+            # 删除远程 tag（忽略错误）
+            git push origin --delete "$tag" || echo "删除 tag 失败（可能已被删除）"
           fi
         done
         echo "清理完成，已保留最近3个 releases 和 tags"
-
