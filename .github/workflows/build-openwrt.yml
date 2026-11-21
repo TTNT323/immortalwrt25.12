@@ -123,6 +123,39 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH               # 执行自定义脚本（如修改配置）
 
+        # ===== 自动覆盖优化文件到源码对应路径 =====
+        # 支持两种方式: (1) 仓库内 patch/ 目录  (2) 仓库根目录 upload-package.zip 自动解压
+        if [ -f "$GITHUB_WORKSPACE/upload-package.zip" ]; then
+          echo '--- 检测到 upload-package.zip，自动解压 ---'
+          rm -rf /tmp/ea0326-pkg && mkdir -p /tmp/ea0326-pkg
+          unzip -q -o "$GITHUB_WORKSPACE/upload-package.zip" -d /tmp/ea0326-pkg
+          cp -rf /tmp/ea0326-pkg/patch/* ./
+          # zip 内也带精简 .config，一并覆盖（步骤9 make defconfig 会据此生成）
+          [ -f /tmp/ea0326-pkg/.config ] && cp -f /tmp/ea0326-pkg/.config ./.config
+        elif [ -d "$GITHUB_WORKSPACE/patch" ]; then
+          echo '--- 应用 patch/ 目录覆盖 ---'
+          cp -rf "$GITHUB_WORKSPACE/patch/"* ./
+        fi
+        if [ -f package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency ]; then
+          echo '--- 应用优化文件覆盖 OK ---'
+          chmod +x package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency 2>/dev/null || true
+          echo '--- 已覆盖文件校验 ---'
+          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
+          ls -l package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b1.dat
+          ls -l package/base-files/files/etc/sysctl.d/99-gaming-latency.conf
+          ls -l package/base-files/files/etc/uci-defaults/99-ea0326gmp-latency
+          echo '--- 2.4G dat 关键项 ---'
+          grep -E '^(Channel|HT_BW|AMSDU_NUM|HT_AMSDU|APSDCapable|MboSupport)=' package/mtk/drivers/wifi-profile/files/mt7981/mt7981.dbdc.b0.dat
+        fi
+
+        # ===== EA0326GMP: 不生成 preloader.bin 与 bl31-uboot.fip =====
+        # 说明: 该机型使用原厂 U-Boot (stock layout, sysupgrade.itb 不含 bootloader),
+        # 这两个 artifact 仅供刷 OpenWrt U-Boot 使用, 常规 sysupgrade 升级不需要。
+        MK=target/linux/mediatek/image/filogic.mk
+        sed -i '/define Device\/nokia_ea0326gmp/,/^endef/{ /ARTIFACTS := preloader.bin bl31-uboot.fip/d; /ARTIFACT\/preloader.bin :=/d; /ARTIFACT\/bl31-uboot.fip :=/d; }' "$MK"
+        echo '--- EA0326GMP ARTIFACT lines after strip ---'
+        sed -n '/define Device\/nokia_ea0326gmp/,/^endef/p' "$MK" | grep ARTIFACT || echo '(none - OK)'
+
     # ========== 步骤 8：SSH 调试（可选） ==========
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
@@ -174,6 +207,8 @@ jobs:
         rm -rf *.manifest
         rm -rf *.json
         rm -rf *bl2.bin
+        # 双保险: 即使源码侧 sed 未生效, 也不上传 bootloader 文件
+        rm -f *preloader*.bin *bl31-uboot*.fip *uboot.fip
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV        # 将固件目录路径存入环境变量
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -240,3 +275,4 @@ jobs:
           fi
         done
         echo "清理完成，已保留最近3个 releases 和 tags"
+
