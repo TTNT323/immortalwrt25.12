@@ -31,17 +31,24 @@ sed -i '/wireless_add_vif "$name" "$ifname"/a iwpriv "$ifname" set Debug=0' pack
 # find /tmp/openclash-temp -type d -name "luci-app-openclash" -exec cp -r {} package/ \;
 # 清理临时文件
 # rm -rf /tmp/openclash-temp
-# ====== Slim down: ea0326gmp skip bl31-uboot.fip / preloader.bin ======
-# .config already disables u-boot and trusted-firmware-a packages.
-# Remove the image-stage ARTIFACTS lines too, so `cat` of the missing
-# fip/bl2 files in staging does not break the build.
+
+# ====== Slim down: ea0326gmp 只保留 squashfs-sysupgrade.itb ======
+# 原理：initramfs-recovery.itb 由 KERNEL_INITRAMFS 链生成；把它置空即可
+# 同时阻止编译 initramfs 内核和生成 recovery.itb，不影响 sysupgrade.itb。
+# ARTIFACTS 三行仍删除，避免 preloader/bl31 缺失导致打包报错。
 MK="target/linux/mediatek/image/filogic.mk"
 if [ -f "$MK" ]; then
-  sed -i '/define Device\/nokia_ea0326gmp/,/^endef/ {
+  sed -i '/^define Device\/nokia_ea0326gmp$/,/^endef$/ {
+    /^  KERNEL_INITRAMFS_SUFFIX := -recovery.itb$/d
+    /^  KERNEL_INITRAMFS := kernel-bin | lzma | \\$/ {
+      s/.*/  KERNEL_INITRAMFS :=/
+      n
+      d
+    }
     /ARTIFACTS := preloader.bin bl31-uboot.fip/d
     /ARTIFACT\/preloader.bin/d
     /ARTIFACT\/bl31-uboot.fip/d
   }' "$MK"
-  echo "---- ea0326gmp device (artifacts removed) ----"
+  echo "---- ea0326gmp device (initramfs + artifacts removed) ----"
   sed -n '/define Device\/nokia_ea0326gmp/,/^endef/p' "$MK"
 fi
